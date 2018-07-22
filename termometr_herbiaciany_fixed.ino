@@ -12,8 +12,8 @@
 #include <OneWire.h>
 #include "DHT.h"
 
-#define perfect_temp 55.00
 
+#define BUTTON_DELAY 400
 #define G3 196
 #define E3 165
 #define C3 131
@@ -22,7 +22,7 @@
 
 #define buzzer_pin 5
 #define led 13
-#define button 9
+#define button_pin 9
 
 #define DHTPIN 2
 #define DHTTYPE DHT11
@@ -38,9 +38,12 @@ Adafruit_SSD1306 display(OLED_RESET);
 
 float temperature = 0;
 float prev_temperature;
+float setpoint0 = 55.00;
 float temperature_dht11 = 0;
 float humidity_dht11 = 0;
 bool DS18B20_OK, DHT11_OK;
+bool setpoint_enable = 0;
+bool parity = 0;
 unsigned long melody_start;
 
 void setup() {
@@ -52,7 +55,9 @@ void setup() {
 
   pinMode(led, OUTPUT);
   pinMode(buzzer_pin, OUTPUT);
-  pinMode(button, INPUT_PULLUP);
+  pinMode(button_pin, INPUT_PULLUP);
+
+  digitalWrite(buzzer_pin, HIGH);
   Serial.println("GPIO started");
 
   dht.begin();
@@ -76,12 +81,101 @@ void setup() {
 
 void loop() {
   sensors_read_display();
-  if ( prev_temperature >= perfect_temp && temperature < perfect_temp && millis() > 4000)
+
+  if (millis() % 400 < 2)
+    printDisplay();
+
+  if ( prev_temperature >= setpoint0 && temperature < setpoint0 && millis() > 4000)
   {
     melody_start = millis();
   }
   melody3(buzzer_pin, melody_start);
+  read_button_neg_switch(button_pin, setpoint_enable);
+  if (setpoint_enable == 1)
+    setpoint0 = map(analogRead(0), 0, 1023, 10, 70);
+
   prev_temperature = temperature;
+}
+
+void read_button_neg_switch(byte button, bool &state)
+{
+  static unsigned long lastTime;
+  unsigned long timeNow = millis();
+
+  if (digitalRead(button) == 0) {
+    if (timeNow - lastTime < BUTTON_DELAY)
+      return;
+    if (digitalRead(button) == 0)
+    {
+      state = !state;
+    }
+    lastTime = timeNow;
+  }
+}
+
+void sensors_read_display()
+{
+  if (millis() % 1000 == 0)
+  {
+    sensors.requestTemperatures();
+    temperature = sensors.getTempCByIndex(0);
+
+    humidity_dht11 = dht.readHumidity();
+    temperature_dht11 = dht.readTemperature();
+  }
+}
+
+void printDisplay()
+{
+  if (isnan(humidity_dht11) || isnan(temperature_dht11) )
+  {
+    Serial.println("DHT11 error!");
+    DHT11_OK = 0;
+  }
+  else
+    DHT11_OK = 1;
+
+  if (temperature == -127.0)
+  {
+    Serial.println("DS18B20 error!");
+    DS18B20_OK = 0;
+  }
+  else
+    DS18B20_OK = 1;
+
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 24);
+  display.print("SP : ");
+
+  if (setpoint_enable == 0 || setpoint_enable == 1 && parity == 1)
+  {
+    display.print(setpoint0);
+    display.print(" \tC");
+  }
+
+  tempDisplay();
+  display.display();
+  display.clearDisplay();
+  parity = !parity;
+}
+
+void tempDisplay()
+{
+  display.setCursor(0, 0);
+  display.setTextSize(1);
+  display.print("T0 : ");
+  display.print(temperature);
+  display.println(" \tC");
+
+  display.print("T1 : ");
+  display.print(temperature_dht11);
+  display.println(" \tC");
+
+  display.print("H1 : ");
+  display.print(humidity_dht11);
+  display.println(" %");
+
 }
 
 void melody3(short buzzer, unsigned long start_melody)
@@ -119,97 +213,7 @@ void melody3(short buzzer, unsigned long start_melody)
     noTone(buzzer);
     digitalWrite(led, LOW);
   }
+  digitalWrite(buzzer_pin, HIGH);
 }
 
-void sensors_read_display()
-{
-  if (millis() % 200 == 0)
-  {
-    sensors.requestTemperatures();
-    temperature = sensors.getTempCByIndex(0);
-
-    humidity_dht11 = dht.readHumidity();
-    temperature_dht11 = dht.readTemperature();
-
-    if (isnan(humidity_dht11) || isnan(temperature_dht11) )
-    {
-      Serial.println("DHT11 error!");
-      DHT11_OK = 0;
-    }
-    else
-      DHT11_OK = 1;
-
-    if (temperature == -127.0)
-    {
-      Serial.println("DS18B20 error!");
-      DS18B20_OK = 0;
-    }
-    else
-      DS18B20_OK = 1;
-
-    // Compute heat index in Fahrenheit (the default)
-    float hic = dht.computeHeatIndex(temperature_dht11, humidity_dht11, false);
-
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 24);
-
-    if (temperature < 70.0 && temperature > 60.0)
-    {
-      if (DS18B20_OK)
-      {
-        display.println("< 70 \tC");
-        Serial.println("< 70 \tC");
-      }
-
-    }
-
-    if (temperature < 60.0 && temperature > 51.0)
-    {
-      if (DS18B20_OK)
-      {
-        display.println("< 60 \tC");
-        Serial.println("< 60 \tC");
-      }
-    }
-
-    if (temperature < 50.0 && temperature != -127.0)
-    {
-      display.println("Insert Honey");
-      Serial.println("Insert Honey");
-    }
-
-    staticElements();
-    tempDisplay();
-
-    digitalWrite(buzzer_pin, digitalRead(button));
-
-    display.display();
-    // delay(200);
-    display.clearDisplay();
-  }
-}
-
-void tempDisplay()
-{
-  display.setCursor(0, 0);
-  display.setTextSize(1);
-  display.print("T0 : ");
-  display.print(temperature);
-  display.println(" \tC");
-
-  display.print("T1 : ");
-  display.print(temperature_dht11);
-  display.println(" \tC");
-
-  display.print("H1 : ");
-  display.print(humidity_dht11);
-  display.println(" %");
-
-}
-
-void staticElements()
-{
-
-}
 
