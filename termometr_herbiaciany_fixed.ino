@@ -27,6 +27,8 @@
 #define DHTPIN 2
 #define DHTTYPE DHT11
 
+#define BUFFER_SIZE 5
+
 // Data wire is plugged into pin 7 on the Arduino
 #define ONE_WIRE_BUS 7
 OneWire oneWire(ONE_WIRE_BUS);
@@ -36,7 +38,9 @@ DHT dht(DHTPIN, DHTTYPE);
 #define OLED_RESET 4
 Adafruit_SSD1306 display(OLED_RESET);
 
-float temperature = 0;
+float temp_array[BUFFER_SIZE];
+float diff_array[BUFFER_SIZE - 1];
+float temperature = 0.0;
 float prev_temperature;
 float setpoint0 = 55.00;
 float temperature_dht11 = 0;
@@ -82,10 +86,14 @@ void setup() {
 void loop() {
   sensors_read_display();
 
-  if (millis() % 400 < 2)
-    printDisplay();
 
-  if ( prev_temperature >= setpoint0 && temperature < setpoint0 && millis() > 4000)
+  if (millis() % 400 < 2)
+  {
+    printDisplay();
+    delay(2);
+  }
+
+  if ( temp_array[1] >= setpoint0 && temp_array[0] < setpoint0 && millis() > 4000)
   {
     melody_start = millis();
   }
@@ -94,7 +102,7 @@ void loop() {
   if (setpoint_enable == 1)
     setpoint0 = map(analogRead(0), 0, 1023, 10, 70);
 
-  prev_temperature = temperature;
+  //prev_temperature = temperature;
 }
 
 void read_button_neg_switch(byte button, bool &state)
@@ -115,14 +123,29 @@ void read_button_neg_switch(byte button, bool &state)
 
 void sensors_read_display()
 {
-  if (millis() % 1000 == 0)
+  if (millis() % 1000 < 2)
   {
     sensors.requestTemperatures();
     temperature = sensors.getTempCByIndex(0);
 
     humidity_dht11 = dht.readHumidity();
     temperature_dht11 = dht.readTemperature();
+    cicrBuffer(temp_array, temperature, BUFFER_SIZE);
+    differentalArray(diff_array, temp_array, BUFFER_SIZE - 1);
+    for ( int i = 0; i < BUFFER_SIZE; i++)
+    {
+      Serial.print(temp_array[i]);
+      Serial.print('\t');
+    }
+    Serial.println();
+    for ( int i = 0; i < BUFFER_SIZE - 1; i++)
+    {
+      Serial.print(diff_array[i]);
+      Serial.print('\t');
+    }
+    Serial.println("\n-----------------");
   }
+  delay(2);
 }
 
 void printDisplay()
@@ -214,6 +237,23 @@ void melody3(short buzzer, unsigned long start_melody)
     digitalWrite(led, LOW);
   }
   digitalWrite(buzzer_pin, HIGH);
+}
+
+void cicrBuffer(float cBuffer[], float push_input, short buf_length)
+{
+  for (short i = buf_length - 1 ; i >= 0; i--)
+  {
+    cBuffer[i] = cBuffer[i - 1];
+  }
+  cBuffer[0] = push_input;
+}
+
+void differentalArray(float diff_array[], float input_array[], short array_length)
+{
+  for (short i = array_length - 1; i >= 0; i--)
+  {
+    diff_array[i] = input_array[i] - input_array[i + 1];
+  }
 }
 
 
