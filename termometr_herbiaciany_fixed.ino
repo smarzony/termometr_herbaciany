@@ -42,13 +42,17 @@ float temp_array[BUFFER_SIZE];
 float diff_array[BUFFER_SIZE - 1];
 float temperature = 0.0;
 float prev_temperature;
-float setpoint0 = 55.00;
+float setpoint0;
+float setpoint_buffer;
+
 float temperature_dht11 = 0;
 float humidity_dht11 = 0;
 bool DS18B20_OK, DHT11_OK;
-bool setpoint_enable = 0;
+bool setpoint_enable = 0, setpoint_enable_last;
+
 bool parity = 0;
 unsigned long melody_start;
+bool melody_playing;
 
 void setup() {
   Serial.begin(9600);
@@ -64,13 +68,24 @@ void setup() {
   digitalWrite(buzzer_pin, HIGH);
   Serial.println("GPIO started");
 
+
+
   dht.begin();
   Serial.println("DHT11 started");
 
-  digitalWrite(led, HIGH);
-  delay(200);
-  digitalWrite(led, LOW);
-  delay(200);
+  // Display welcome text - not working, I don't know why
+  /*
+    delay(2000);
+    display.setCursor(0, 0);
+    display.setTextSize(1);
+    display.println("Termometr Herbaciany v2.0");
+    display.println("GPIO OK");
+    display.println("Ekran OK");
+    display.println("Termometr OK");
+    display.display();
+    display.clearDisplay();
+    delay(2000);
+  */
 
   digitalWrite(led, HIGH);
   delay(200);
@@ -81,28 +96,47 @@ void setup() {
   delay(200);
   digitalWrite(led, LOW);
   delay(200);
+
+  digitalWrite(led, HIGH);
+  delay(200);
+  digitalWrite(led, LOW);
+  delay(200);
+
+  setpoint0  = map(analogRead(0), 0, 1023, 10, 70);
+  sensors_read_display(true);
 }
 
 void loop() {
-  sensors_read_display();
+  if (!melody_playing)
+    sensors_read_display(!setpoint_enable);
 
-
-  if (millis() % 400 < 2)
+  if (!melody_playing)
   {
-    printDisplay();
-    delay(2);
+    if ( (millis() > 1000 ) && (millis() % 400 < 3))
+    {
+      printDisplay();
+      delay(3);
+    }
   }
-
-  if ( temp_array[1] >= setpoint0 && temp_array[0] < setpoint0 && millis() > 4000)
+  
+  if ( temp_array[1] >= setpoint0 && temp_array[0] < setpoint0 && millis() > 4000 && !melody_playing)
   {
+    melody_playing = 1;
     melody_start = millis();
   }
   melody3(buzzer_pin, melody_start);
-  read_button_neg_switch(button_pin, setpoint_enable);
-  if (setpoint_enable == 1)
-    setpoint0 = map(analogRead(0), 0, 1023, 10, 70);
+  if (!melody_playing)
+    read_button_neg_switch(button_pin, setpoint_enable);
 
-  //prev_temperature = temperature;
+
+  if (setpoint_enable == 1)
+    setpoint_buffer = map(analogRead(0), 0, 1023, 10, 70);
+
+  if (setpoint_enable == 0 && setpoint_enable_last)
+    setpoint0 = setpoint_buffer;
+
+  // remember last state for pulse event
+  setpoint_enable_last = setpoint_enable;
 }
 
 void read_button_neg_switch(byte button, bool &state)
@@ -121,29 +155,36 @@ void read_button_neg_switch(byte button, bool &state)
   }
 }
 
-void sensors_read_display()
+void sensors_read_display(bool read)
 {
   if (millis() % 1000 < 2)
   {
-    sensors.requestTemperatures();
-    temperature = sensors.getTempCByIndex(0);
+    if (read)
+    {
+      sensors.requestTemperatures();
+      temperature = sensors.getTempCByIndex(0);
 
-    humidity_dht11 = dht.readHumidity();
-    temperature_dht11 = dht.readTemperature();
-    cicrBuffer(temp_array, temperature, BUFFER_SIZE);
-    differentalArray(diff_array, temp_array, BUFFER_SIZE - 1);
-    for ( int i = 0; i < BUFFER_SIZE; i++)
-    {
-      Serial.print(temp_array[i]);
-      Serial.print('\t');
+
+      humidity_dht11 = dht.readHumidity();
+      temperature_dht11 = dht.readTemperature();
+      cicrBuffer(temp_array, temperature, BUFFER_SIZE);
+      differentalArray(diff_array, temp_array, BUFFER_SIZE - 1);
+
+      for ( int i = 0; i < BUFFER_SIZE; i++)
+      {
+        Serial.print(temp_array[i]);
+        Serial.print('\t');
+      }
+      Serial.println();
+      for ( int i = 0; i < BUFFER_SIZE - 1; i++)
+      {
+        Serial.print(diff_array[i]);
+        Serial.print('\t');
+      }
+      Serial.println("\n-----------------");
     }
-    Serial.println();
-    for ( int i = 0; i < BUFFER_SIZE - 1; i++)
-    {
-      Serial.print(diff_array[i]);
-      Serial.print('\t');
-    }
-    Serial.println("\n-----------------");
+    else
+      Serial.println("\nRead blocked, setpoint mode");
   }
   delay(2);
 }
@@ -166,14 +207,25 @@ void printDisplay()
   else
     DS18B20_OK = 1;
 
-  display.setTextSize(1);
+  if (isnan(humidity_dht11) && isnan(temperature_dht11) )
+    display.setTextSize(2);
+  else
+    display.setTextSize(1);
   display.setTextColor(WHITE);
-  display.setCursor(0, 24);
-  display.print("SP : ");
-
-  if (setpoint_enable == 0 || setpoint_enable == 1 && parity == 1)
+  //display.setCursor(0, 24);
+  display.print("SP ");
+  char str[6];
+  if (setpoint_enable == 0)
   {
-    display.print(setpoint0);
+    dtostrf(setpoint0, 2, 1, str );
+    display.print(str);
+    display.print(" \tC");
+  }
+
+  if ( setpoint_enable == 1 && parity == 1 )
+  {
+    dtostrf(setpoint_buffer, 2, 1, str );
+    display.print(str);
     display.print(" \tC");
   }
 
@@ -186,18 +238,26 @@ void printDisplay()
 void tempDisplay()
 {
   display.setCursor(0, 0);
-  display.setTextSize(1);
-  display.print("T0 : ");
-  display.print(temperature);
+  if (isnan(humidity_dht11) && isnan(temperature_dht11) )
+    display.setTextSize(2);
+  else
+    display.setTextSize(1);
+  display.print("T0 ");
+  char str[6];
+  dtostrf(temperature, 2, 1, str );
+  display.print(str);
   display.println(" \tC");
 
-  display.print("T1 : ");
-  display.print(temperature_dht11);
-  display.println(" \tC");
+  if (!isnan(humidity_dht11) || !isnan(temperature_dht11) )
+  {
+    display.print("T1 : ");
+    display.print(temperature_dht11);
+    display.println(" \tC");
 
-  display.print("H1 : ");
-  display.print(humidity_dht11);
-  display.println(" %");
+    display.print("H1 : ");
+    display.print(humidity_dht11);
+    display.println(" %");
+  }
 
 }
 
@@ -237,6 +297,8 @@ void melody3(short buzzer, unsigned long start_melody)
     digitalWrite(led, LOW);
   }
   digitalWrite(buzzer_pin, HIGH);
+
+  melody_playing = 0;
 }
 
 void cicrBuffer(float cBuffer[], float push_input, short buf_length)
